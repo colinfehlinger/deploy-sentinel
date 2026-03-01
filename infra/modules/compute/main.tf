@@ -212,7 +212,7 @@ resource "aws_ecs_service" "api" {
     container_port   = 3000
   }
 
-  depends_on = [aws_lb_listener.https]
+  depends_on = [aws_lb_listener.http, aws_lb_listener.http_redirect, aws_lb_listener.https]
 
   lifecycle {
     ignore_changes = [desired_count]

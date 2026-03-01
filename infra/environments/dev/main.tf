@@ -114,8 +114,8 @@ module "observability" {
   project_name                = var.project_name
   environment                 = var.environment
   aws_region                  = var.aws_region
-  alb_arn_suffix              = module.compute.alb_arn
-  api_target_group_arn_suffix = module.compute.api_target_group_arn
+  alb_arn_suffix              = module.compute.alb_arn_suffix
+  api_target_group_arn_suffix = module.compute.api_target_group_arn_suffix
   cluster_name                = module.compute.cluster_name
   api_service_name            = module.compute.api_service_name
   worker_service_name         = module.compute.worker_service_name

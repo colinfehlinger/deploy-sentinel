@@ -35,8 +35,26 @@ resource "aws_lb_target_group" "api" {
   tags = var.tags
 }
 
-# --- HTTP Listener (redirect to HTTPS) ---
+# --- HTTP Listener (forward) ---
+# Used in dev (no cert) as the primary listener.
+# Used in prod alongside HTTPS — redirects to 443.
 resource "aws_lb_listener" "http" {
+  count             = var.acm_certificate_arn == "" ? 1 : 0
+  load_balancer_arn = aws_lb.main.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.api.arn
+  }
+
+  tags = var.tags
+}
+
+# --- HTTP Listener (redirect to HTTPS — prod only) ---
+resource "aws_lb_listener" "http_redirect" {
+  count             = var.acm_certificate_arn != "" ? 1 : 0
   load_balancer_arn = aws_lb.main.arn
   port              = 80
   protocol          = "HTTP"
@@ -53,10 +71,9 @@ resource "aws_lb_listener" "http" {
   tags = var.tags
 }
 
-# --- HTTPS Listener ---
-# Note: For production, replace the default_action with a forward to target group
-# and add an ACM certificate. For dev without a domain, use HTTP listener directly.
+# --- HTTPS Listener (only created when ACM certificate is provided) ---
 resource "aws_lb_listener" "https" {
+  count             = var.acm_certificate_arn != "" ? 1 : 0
   load_balancer_arn = aws_lb.main.arn
   port              = 443
   protocol          = "HTTPS"

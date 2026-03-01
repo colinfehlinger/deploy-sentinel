@@ -8,6 +8,16 @@ output "alb_arn" {
   description = "ALB ARN"
 }
 
+output "alb_arn_suffix" {
+  value       = aws_lb.main.arn_suffix
+  description = "ALB ARN suffix (for CloudWatch metrics dimensions)"
+}
+
+output "api_target_group_arn_suffix" {
+  value       = aws_lb_target_group.api.arn_suffix
+  description = "API target group ARN suffix (for CloudWatch metrics dimensions)"
+}
+
 output "alb_zone_id" {
   value       = aws_lb.main.zone_id
   description = "ALB hosted zone ID (for Route53)"
