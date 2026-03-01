@@ -1,0 +1,125 @@
+name: Deploy to Prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag (git SHA) to deploy"
+        required: true
+        type: string
+      confirm:
+        description: "Type 'deploy-prod' to confirm"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  PROJECT_NAME: deploy-sentinel
+  ENVIRONMENT: prod
+
+jobs:
+  validate:
+    name: Validate Inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm deployment
+        run: |
+          if [ "${{ inputs.confirm }}" != "deploy-prod" ]; then
+            echo "Confirmation string does not match. Aborting."
+            exit 1
+          fi
+
+  promote-images:
+    name: Promote Images to Prod
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production
+    strategy:
+      matrix:
+        service: [api, worker]
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Pull dev image and push to prod repo
+        run: |
+          DEV_IMAGE="${{ steps.ecr.outputs.registry }}/${{ env.PROJECT_NAME }}-${{ matrix.service }}-dev:${{ inputs.image_tag }}"
+          PROD_IMAGE="${{ steps.ecr.outputs.registry }}/${{ env.PROJECT_NAME }}-${{ matrix.service }}-prod:${{ inputs.image_tag }}"
+
+          docker pull "$DEV_IMAGE"
+          docker tag "$DEV_IMAGE" "$PROD_IMAGE"
+          docker tag "$DEV_IMAGE" "${{ steps.ecr.outputs.registry }}/${{ env.PROJECT_NAME }}-${{ matrix.service }}-prod:latest"
+          docker push "$PROD_IMAGE"
+          docker push "${{ steps.ecr.outputs.registry }}/${{ env.PROJECT_NAME }}-${{ matrix.service }}-prod:latest"
+
+  terraform:
+    name: Terraform Apply (Prod)
+    needs: promote-images
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.7"
+
+      - name: Terraform Init
+        working-directory: infra/environments/prod
+        run: terraform init
+
+      - name: Terraform Plan
+        working-directory: infra/environments/prod
+        run: |
+          terraform plan \
+            -var="image_tag=${{ inputs.image_tag }}" \
+            -var="acm_certificate_arn=${{ secrets.ACM_CERTIFICATE_ARN }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: infra/environments/prod
+        run: terraform apply -auto-approve tfplan
+
+  deploy-ecs:
+    name: Deploy ECS Services (Prod)
+    needs: terraform
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Force new deployment
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }} \
+            --service api \
+            --force-new-deployment
+
+          aws ecs update-service \
+            --cluster ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }} \
+            --service worker \
+            --force-new-deployment
+
+      - name: Wait for services to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }} \
+            --services api worker
+        timeout-minutes: 15
